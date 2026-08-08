@@ -36,3 +36,13 @@ pnpm-debug.log*
 
 # Certs (for local HTTPS dev)
 certs/
+
+# Server data
+packages/server/data.db
+packages/server/data.db-shm
+packages/server/data.db-wal
+packages/server/uploads/
+packages/server/dist/
+
+# TypeScript build info
+*.tsbuildinfo

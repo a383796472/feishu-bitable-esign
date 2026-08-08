@@ -1,25 +1,44 @@
 # 飞书多维表格电子签名插件
 
-在飞书多维表格（Bitable）中实现手写电子签名功能的扩展脚本插件。
+在飞书多维表格（Bitable）中实现完整的电子签名工作流：创建确认单 → 生成二维码 → 移动端扫码签名 → 数据自动回写表格。
 
 ## 功能特性
 
-- 手写签名画布，支持鼠标和触摸输入
-- 可自定义画笔颜色和粗细
-- 签名保存为 PNG 图片，直接写入多维表格记录
-- 支持附件字段和文本/URL 字段两种存储方式
-- 自动识别当前选中的数据表和记录
-- HiDPI 屏幕适配，签名清晰锐利
-- 撤销/清空操作
-- 连接状态实时显示
+- 三步向导式配置：选择数据 → 设置确认单 → 生成二维码
+- 支持单人签字和多人签字模式
+- 可选身份验证（手机号验证码）
+- 独立 H5 签名页面，扫码即可签字
+- 签名结果自动回写多维表格（签字状态 + 签名图片）
+- 字段级别选择，支持拖拽排序、过滤空值/零值
+- 飞书风格 UI，移动端适配
+
+## 系统架构
+
+```
+┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│   Widget 插件        │     │   后端服务器         │     │   H5 签名页面       │
+│  (嵌入多维表格)      │────▶│  (Express+SQLite)  │────▶│  (移动端签名)       │
+│                     │     │                     │     │                     │
+│  Step1: 选择字段     │     │  会话管理            │     │  数据展示           │
+│  Step2: 设置确认单   │     │  Bitable API 封装   │     │  身份验证           │
+│  Step3: 生成二维码   │◀────│  签名回写            │◀────│  手写签名           │
+└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+                                      │
+                                      ▼
+                            ┌─────────────────────┐
+                            │   飞书多维表格       │
+                            │  (数据源 + 回写)     │
+                            └─────────────────────┘
+```
 
 ## 技术栈
 
-- **Vue 3** - 前端框架
-- **Vite** - 构建工具
-- **TypeScript** - 类型安全
-- **signature_pad** - 签名画布库
-- **飞书多维表格扩展脚本 SDK** - 数据交互
+| 模块 | 技术 | 说明 |
+|------|------|------|
+| Widget | Vue 3 + Vite + TypeScript | 嵌入飞书多维表格的配置向导 |
+| Server | Express + SQLite + TypeScript | 会话管理、数据桥接、签名回写 |
+| H5 | Vue 3 + Vite + TypeScript | 移动端签名页面 |
+| 共享 | TypeScript 类型定义 | 前后端 API 契约 |
 
 ## 快速开始
 
@@ -34,116 +53,155 @@
 npm install
 ```
 
-### 本地开发
+### 配置环境变量
+
+```bash
+# 后端
+cp packages/server/.env.example packages/server/.env
+# 编辑 .env 填入飞书应用凭证
+
+# Widget
+cp packages/widget/.env.example packages/widget/.env
+
+# H5
+cp packages/h5/.env.example packages/h5/.env
+```
+
+### 本地开发（三个服务同时启动）
 
 ```bash
 npm run dev
 ```
 
-开发服务器将运行在 `http://localhost:5173`。
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| Server | 3001 | 后端 API + 静态文件托管 |
+| Widget | 5173 | 多维表格插件开发服务器 |
+| H5 | 5174 | 移动端签名页面 |
 
-> **注意**：飞书多维表格要求扩展脚本通过 HTTPS 访问。本地开发时，可以使用 `ngrok`、`cloudflare tunnel` 等工具将本地服务暴露为 HTTPS URL，或直接部署到支持 HTTPS 的平台。
-
-### 构建生产版本
+### 构建
 
 ```bash
 npm run build
 ```
 
-构建产物在 `dist/` 目录中。
-
-### 部署
-
-将 `dist/` 目录部署到任意支持静态托管的平台：
-
-- **Vercel**：`vercel --prod`
-- **Netlify**：拖拽 `dist/` 文件夹到 Netlify 部署面板
-- **GitHub Pages**：推送到 `gh-pages` 分支
-- **Nginx**：将 `dist/` 复制到服务器静态文件目录
-
-### 在多维表格中配置
-
-1. 打开飞书多维表格
-2. 点击右上角「+」按钮 → 「添加脚本」→ 「扩展脚本」
-3. 在 URL 输入框中粘贴部署后的公网地址
-4. 点击确认，扩展脚本将在表格中加载
+构建产物：
+- `packages/widget/dist/` - Widget 插件
+- `packages/h5/dist/` - H5 签名页面
+- `packages/server/dist/` - 后端服务
 
 ## 项目结构
 
 ```
 feishu-bitable-esign/
-├── src/
-│   ├── api/
-│   │   └── bitable.ts        # 多维表格 SDK API 封装
-│   ├── components/
-│   │   └── SignaturePad.vue  # 签名画布组件
-│   ├── types/
-│   │   └── index.ts          # TypeScript 类型定义
-│   ├── utils/
-│   │   └── signature.ts      # 签名工具函数
-│   ├── styles/
-│   │   └── main.css          # 全局样式
-│   ├── App.vue               # 根组件
-│   ├── main.ts               # 应用入口
-│   └── vite-env.d.ts         # Vite 类型声明
-├── public/
-│   └── favicon.svg           # 网站图标
-├── index.html                # HTML 入口
-├── vite.config.ts            # Vite 配置
-├── tsconfig.json             # TypeScript 配置
-├── package.json
+├── packages/
+│   ├── widget/                 # 飞书多维表格 Widget 插件
+│   │   ├── src/
+│   │   │   ├── api/
+│   │   │   │   ├── bitable.ts  # Bitable SDK 封装
+│   │   │   │   └── server.ts   # 后端 API 调用
+│   │   │   ├── components/
+│   │   │   │   ├── StepIndicator.vue   # 步骤指示器
+│   │   │   │   ├── FieldSelector.vue   # 字段选择器 (Step 1)
+│   │   │   │   ├── FormConfig.vue      # 确认单配置 (Step 2)
+│   │   │   │   └── QrResult.vue         # 二维码结果 (Step 3)
+│   │   │   ├── types/
+│   │   │   │   └── bitable.ts  # Bitable SDK 类型定义
+│   │   │   ├── styles/
+│   │   │   │   └── main.css
+│   │   │   ├── App.vue         # 主应用
+│   │   │   └── main.ts
+│   │   ├── index.html
+│   │   └── package.json
+│   │
+│   ├── server/                 # 后端服务器
+│   │   ├── src/
+│   │   │   ├── routes/
+│   │   │   │   ├── sessions.ts # 会话管理路由
+│   │   │   │   └── sign.ts     # 签名提交路由
+│   │   │   ├── services/
+│   │   │   │   ├── bitable.ts  # 飞书 API 封装
+│   │   │   │   └── qrcode.ts   # 二维码生成
+│   │   │   ├── db.ts           # SQLite 数据库
+│   │   │   └── index.ts        # 服务器入口
+│   │   ├── uploads/            # 签名图片存储
+│   │   ├── .env.example
+│   │   └── package.json
+│   │
+│   └── h5/                     # H5 移动端签名页面
+│       ├── src/
+│       │   ├── components/
+│       │   │   └── SignaturePad.vue  # 签名画布
+│       │   ├── api.ts          # API 调用
+│       │   ├── App.vue         # 主页面
+│       │   ├── style.css
+│       │   └── main.ts
+│       ├── index.html
+│       └── package.json
+│
+├── shared/
+│   └── types.ts                # 共享类型定义 (API 契约)
+│
+├── package.json                # Monorepo 根配置
 └── README.md
 ```
 
-## 工作原理
+## 工作流程
 
-该插件本质上是一个 Web 应用，通过 URL 嵌入到飞书多维表格的 iframe 中。页面内通过飞书注入的全局 `bitable` 对象与表格数据交互：
+### 1. 创建确认单（Widget 插件）
 
-1. **获取上下文**：通过 `bitable.base.getSelection()` 获取当前选中的数据表和记录
-2. **采集签名**：使用 `signature_pad` 库在 Canvas 上捕获手写签名
-3. **导出图片**：将签名画布转为 base64 PNG 图片
-4. **写入表格**：通过 `table.setRecord()` 将签名图片写入指定记录的指定字段
+1. 在飞书多维表格中打开「签字确认」扩展脚本
+2. **Step 1 选择数据**：选择数据表，勾选需要展示的字段，拖拽排序
+3. **Step 2 设置确认单**：输入确认单名称，选择单人/多人签字模式，设置身份验证
+4. **Step 3 创建完成**：生成二维码和分享链接
 
-### 支持的字段类型
+### 2. 扫码签名（H5 页面）
 
-| 字段类型 | 存储方式 | 说明 |
-|---------|---------|------|
-| 附件 | 图片附件 | 直接将签名作为图片附件写入 |
-| 多行文本 | base64 / URL | 将签名数据 URL 写入文本字段 |
-| 链接 (URL) | 图片 URL | 需配合图床使用 |
+1. 签字人扫描二维码或点击分享链接
+2. H5 页面展示该记录的字段数据
+3. 如开启身份验证，需输入手机号验证码
+4. 在签名画布上手写签名
+5. 点击提交完成签字
 
-## 使用流程
+### 3. 数据回写（自动）
 
-1. 在多维表格中打开目标数据表
-2. 选中需要签名的记录（行）
-3. 打开电子签名扩展脚本
-4. 选择目标字段（签名保存位置）
-5. 在画布上手写签名
-6. 点击「保存签名」
-7. 签名将自动写入当前选中记录的指定字段
+签名提交后，后端自动：
+- 保存签名图片
+- 通过飞书 API 更新多维表格记录
+- 更新「签字状态」字段为「已签字」
+- 写入签名图片到「签字确认结果」字段
 
-## 开发指南
+## API 接口
 
-### 添加自定义功能
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/sessions` | 创建签名会话 |
+| GET | `/api/sessions/:sessionId` | 获取会话详情 |
+| GET | `/api/sessions/:sessionId/records/:recordId` | 获取记录签字数据 |
+| GET | `/api/sessions/:sessionId/status` | 获取签字状态概览 |
+| POST | `/api/sessions/:sessionId/sign` | 提交签名 |
+| POST | `/api/sessions/:sessionId/send-code` | 发送验证码 |
 
-编辑 `src/App.vue` 添加业务逻辑，编辑 `src/api/bitable.ts` 扩展 Bitable API 调用。
+## 飞书配置
 
-### 类型定义
+### 多维表格扩展脚本
 
-Bitable SDK 的类型定义在 `src/types/index.ts` 中。如需添加新的 API 类型，请参考官方文档：
+1. 部署 Widget 的 `dist/` 到 HTTPS 地址
+2. 在多维表格中「添加扩展脚本」→ 粘贴 URL
 
-- [开发指南](https://bytedance.feishu.cn/docx/HazFdSHH9ofRGKx8424cwzLlnZc)
-- [API 文档](https://bytedance.feishu.cn/docx/HjCEd1sPzoVnxIxF3LrcKnepnUf)
-- [开放平台](https://open.feishu.cn/document/base-extension/base-view-extensions)
+### 飞书开放平台应用
 
-### 本地 HTTPS 开发
+1. 在 [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用
+2. 获取 App ID 和 App Secret
+3. 配置到后端 `.env` 文件
+4. 开通多维表格相关权限
 
-如需 HTTPS 本地开发环境，生成自签名证书并取消 `vite.config.ts` 中的 HTTPS 注释：
+## 参考文档
 
-```bash
-mkdir certs
-openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout certs/key.pem -out certs/cert.pem
-```
+- [飞书多维表格扩展脚本开发指南](https://bytedance.feishu.cn/docx/HazFdSHH9ofRGKx8424cwzLlnZc)
+- [扩展脚本 API 文档](https://bytedance.feishu.cn/docx/HjCEd1sPzoVnxIxF3LrcKnepnUf)
+- [飞书开放平台 - Bitable](https://open.feishu.cn/document/base-extension/base-view-extensions)
+- [多维表格服务端 API](https://open.feishu.cn/document/server-docs/docs/bitable-v1/bitable-overview)
 
 ## 许可证
 
