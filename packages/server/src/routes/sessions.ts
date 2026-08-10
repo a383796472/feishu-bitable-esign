@@ -35,6 +35,7 @@ import type {
   Signer,
   SignerStatus,
   VerifyPhoneResponse,
+  WritebackConfig,
   ApiResponse,
 } from '../../../../shared/types';
 
@@ -133,7 +134,7 @@ router.post('/', async (req: Request, res: Response) => {
     const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 天有效期
 
     // 提取回写配置
-    const writebackConfig = body.writebackConfig || {};
+    const writebackConfig: Partial<WritebackConfig> = body.writebackConfig || {};
 
     // 存储会话
     createSession({
