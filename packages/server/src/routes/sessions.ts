@@ -25,6 +25,7 @@ import {
 } from '../db';
 import { generateQRCode } from '../services/qrcode';
 import { getRecord } from '../services/bitable';
+import { getTenantAccessToken } from '../services/feishu-token';
 import type {
   CreateSessionRequest,
   CreateSessionResponse,
@@ -292,16 +293,26 @@ router.post('/:sessionId/verify-phone', async (req: Request, res: Response) => {
 
     // 方式2: 如果未在 signers 中匹配到, 且配置了 phone_field,
     // 从飞书表格记录中按手机号字段查找对应签字人
-    if (!matchedSigner && session.phone_field && session.access_token) {
-      // 从飞书获取所有记录, 查找手机号匹配的记录
-      for (const recordId of session.record_ids) {
-        try {
-          const rawData = await getRecord(
-            session.access_token,
-            session.app_token,
-            session.table_id,
-            recordId
-          );
+    if (!matchedSigner && session.phone_field) {
+      // 自动获取飞书 access_token
+      let accessToken: string;
+      try {
+        accessToken = await getTenantAccessToken();
+      } catch (err) {
+        console.error('[验证手机号] 获取飞书token失败:', err);
+        accessToken = '';
+      }
+
+      if (accessToken) {
+        // 从飞书获取所有记录, 查找手机号匹配的记录
+        for (const recordId of session.record_ids) {
+          try {
+            const rawData = await getRecord(
+              accessToken,
+              session.app_token,
+              session.table_id,
+              recordId
+            );
 
           // 获取手机号字段的值
           const phoneValue = rawData[session.phone_field];
@@ -332,6 +343,7 @@ router.post('/:sessionId/verify-phone', async (req: Request, res: Response) => {
           }
         } catch (err) {
           console.error('[验证手机号] 获取飞书记录失败:', err);
+        }
         }
       }
     }
@@ -442,21 +454,20 @@ router.get(
       // 标记为已查看
       markRecordViewed(sessionId, recordId, signerId);
 
-      // 从飞书获取记录数据 (如果有 accessToken)
+      // 从飞书获取记录数据 (自动获取 token)
       let recordData: Record<string, unknown> = {};
-      if (session.access_token) {
-        try {
-          const rawData = await getRecord(
-            session.access_token,
-            session.app_token,
-            session.table_id,
-            recordId
-          );
-          recordData = transformRecordData(rawData, session.fields_config);
-        } catch (err) {
-          console.error('[获取飞书记录] 失败:', err);
-          // 继续返回空数据, 不阻断流程
-        }
+      try {
+        const accessToken = await getTenantAccessToken();
+        const rawData = await getRecord(
+          accessToken,
+          session.app_token,
+          session.table_id,
+          recordId
+        );
+        recordData = transformRecordData(rawData, session.fields_config);
+      } catch (err) {
+        console.error('[获取飞书记录] 失败:', err);
+        // 继续返回空数据, 不阻断流程
       }
 
       // 当前签字人

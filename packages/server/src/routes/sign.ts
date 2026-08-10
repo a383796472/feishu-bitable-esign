@@ -16,6 +16,7 @@ import {
   updateSignRecordStatus,
 } from '../db';
 import { uploadFile, updateRecord } from '../services/bitable';
+import { getTenantAccessToken } from '../services/feishu-token';
 import type {
   SubmitSignatureRequest,
   SubmitSignatureResponse,
@@ -149,54 +150,54 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
     const signedAt = new Date().toISOString();
     updateSignRecordStatus(signRecord.id, 'signed', filePath, signedAt);
 
-    // 回写到飞书 Bitable (如果有 accessToken)
+    // 回写到飞书 Bitable (自动获取 token)
     const statusField = row.status_field || '签字状态';
     const signatureField = row.signature_field || '签名图片';
 
-    if (row.access_token) {
-      try {
-        // Step 1: 上传签名图片附件
-        await uploadFile(
-          row.access_token,
-          row.app_token,
-          row.table_id,
-          body.recordId,
-          signatureField,
-          filePath
-        );
+    try {
+      const accessToken = await getTenantAccessToken();
 
-        // Step 2: 更新签字状态字段
-        let statusValue = '已签';
-        if (row.sign_mode === 'multi') {
-          // 会签模式: 检查该记录的所有签字人状态
-          const recordSigners = getSignRecordsByRecord(sessionId, body.recordId);
-          const allSigned = recordSigners.length > 0 && recordSigners.every(r => r.status === 'signed');
-          const anySigned = recordSigners.some(r => r.status === 'signed');
+      // Step 1: 上传签名图片附件
+      await uploadFile(
+        accessToken,
+        row.app_token,
+        row.table_id,
+        body.recordId,
+        signatureField,
+        filePath
+      );
 
-          if (allSigned) {
-            statusValue = '全部已签';
-          } else if (anySigned) {
-            statusValue = '部分已签';
-          } else {
-            statusValue = '未签';
-          }
+      // Step 2: 更新签字状态字段
+      let statusValue = '已签';
+      if (row.sign_mode === 'multi') {
+        // 会签模式: 检查该记录的所有签字人状态
+        const recordSigners = getSignRecordsByRecord(sessionId, body.recordId);
+        const allSigned = recordSigners.length > 0 && recordSigners.every(r => r.status === 'signed');
+        const anySigned = recordSigners.some(r => r.status === 'signed');
+
+        if (allSigned) {
+          statusValue = '全部已签';
+        } else if (anySigned) {
+          statusValue = '部分已签';
+        } else {
+          statusValue = '未签';
         }
-
-        await updateRecord(
-          row.access_token,
-          row.app_token,
-          row.table_id,
-          body.recordId,
-          { [statusField]: statusValue }
-        );
-
-        console.log(
-          `[回写飞书] 成功: session=${sessionId} record=${body.recordId} status=${statusValue}`
-        );
-      } catch (err) {
-        // 回写失败不阻断流程, 签名已本地保存
-        console.error('[回写飞书] 失败:', err);
       }
+
+      await updateRecord(
+        accessToken,
+        row.app_token,
+        row.table_id,
+        body.recordId,
+        { [statusField]: statusValue }
+      );
+
+      console.log(
+        `[回写飞书] 成功: session=${sessionId} record=${body.recordId} status=${statusValue}`
+      );
+    } catch (err) {
+      // 回写失败不阻断流程, 签名已本地保存
+      console.error('[回写飞书] 失败:', err);
     }
 
     // 检查是否还有未签的记录
