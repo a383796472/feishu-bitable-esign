@@ -15,7 +15,7 @@ import {
   getSignRecordsByRecord,
   updateSignRecordStatus,
 } from '../db';
-import { uploadFile, updateRecord } from '../services/bitable';
+import { uploadFile, updateRecord, getFields } from '../services/bitable';
 import { getTenantAccessToken } from '../services/feishu-token';
 import type {
   SubmitSignatureRequest,
@@ -168,7 +168,7 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
       );
 
       // Step 2: 更新签字状态字段
-      let statusValue = '已签';
+      let statusValue: unknown = '已签';
       if (row.sign_mode === 'multi') {
         // 会签模式: 检查该记录的所有签字人状态
         const recordSigners = getSignRecordsByRecord(sessionId, body.recordId);
@@ -182,6 +182,19 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
         } else {
           statusValue = '未签';
         }
+      }
+
+      // 获取字段类型, 根据类型适配值
+      // type 7 = 复选框(需要 boolean), type 1 = 文本, type 3 = 单选
+      try {
+        const fields = await getFields(accessToken, row.app_token, row.table_id);
+        const statusFieldMeta = fields.find(f => f.field_name === statusField);
+        if (statusFieldMeta && statusFieldMeta.type === 7) {
+          // 复选框字段: "已签"/"全部已签" -> true, 其他 -> false
+          statusValue = statusValue === '已签' || statusValue === '全部已签';
+        }
+      } catch (err) {
+        console.error('[回写飞书] 获取字段类型失败, 使用默认字符串:', err);
       }
 
       await updateRecord(

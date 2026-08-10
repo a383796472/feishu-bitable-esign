@@ -164,6 +164,44 @@ export async function uploadFile(
 }
 
 /**
+ * 获取数据表的字段列表 (含字段类型)
+ * @param accessToken 飞书 access_token
+ * @param appToken   Bitable app_token
+ * @param tableId    数据表 ID
+ * @returns 字段列表 [{ field_name, field_id, type }]
+ */
+export async function getFields(
+  accessToken: string,
+  appToken: string,
+  tableId: string
+): Promise<Array<{ field_name: string; field_id: string; type: number }>> {
+  const url = `${BITABLE_BASE_URL}/apps/${appToken}/tables/${tableId}/fields`;
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`获取字段列表失败: HTTP ${res.status} ${text}`);
+  }
+
+  const json = (await res.json()) as FeishuResponse<{
+    items: Array<{ field_name: string; field_id: string; type: number }>;
+  }>;
+
+  if (json.code !== 0) {
+    throw new Error(`获取字段列表失败: ${json.msg}`);
+  }
+
+  return json.data?.items ?? [];
+}
+
+/**
  * 批量获取记录 (用于一次性获取多条记录数据)
  * @param accessToken 飞书 access_token
  * @param appToken   Bitable app_token

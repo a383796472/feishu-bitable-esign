@@ -141,7 +141,7 @@ import {
   checkEditable,
 } from './api/bitable'
 import { createSession } from './api/server'
-import type { Signer, SignMode, FieldConfig, WritebackConfig } from '@shared/types'
+import type { Signer, SignMode, FieldConfig } from '@shared/types'
 
 // ========== 步骤控制 ==========
 const currentStep = ref(1)
