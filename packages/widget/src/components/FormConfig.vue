@@ -38,9 +38,12 @@
             <circle cx="16" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.8" />
             <path d="M3 19c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5M11 19c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
           </svg>
-          <span>多人签字</span>
+          <span>会签（多人）</span>
         </button>
       </div>
+      <p v-if="signMode === 'multi'" class="mode-tip">
+        会签模式：所有签字人独立签字，谁签完即回写到表格，无需等待全部签完
+      </p>
     </div>
 
     <!-- 验证身份 -->
@@ -71,10 +74,54 @@
           </svg>
         </span>
         <span class="option-content">
-          <span class="option-label">是否验证身份</span>
-          <span class="option-desc">开启后签字人需通过手机验证码验证身份</span>
+          <span class="option-label">身份验证（手机号匹配，免费）</span>
+          <span class="option-desc">签字人输入手机号，与表格中手机号匹配后即可签字，无需短信费用</span>
         </span>
       </label>
+
+      <!-- 手机号字段选择 -->
+      <div v-if="verifyIdentity" class="sub-config">
+        <label class="input-label">选择手机号字段</label>
+        <select
+          :value="phoneField"
+          class="select-input"
+          @change="emit('update:phoneField', ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">请选择手机号字段</option>
+          <option v-for="field in availableFields" :key="field.id" :value="field.name">
+            {{ field.name }}
+          </option>
+        </select>
+        <p class="field-hint">选择表格中存储手机号的字段，用于签字人身份匹配</p>
+      </div>
+    </div>
+
+    <!-- 回写字段配置 -->
+    <div class="card">
+      <div class="card-title">回写字段配置</div>
+      <p class="config-desc">签字完成后，系统将自动回写以下字段到多维表格</p>
+      <div class="sub-config">
+        <label class="input-label">签字状态字段名</label>
+        <input
+          :value="statusField"
+          type="text"
+          class="text-input"
+          placeholder="签字状态"
+          @input="emit('update:statusField', ($event.target as HTMLInputElement).value)"
+        />
+        <p class="field-hint">写入值：未签 / 已签 / 部分已签 / 全部已签</p>
+      </div>
+      <div class="sub-config">
+        <label class="input-label">签名图片字段名</label>
+        <input
+          :value="signatureField"
+          type="text"
+          class="text-input"
+          placeholder="签名图片"
+          @input="emit('update:signatureField', ($event.target as HTMLInputElement).value)"
+        />
+        <p class="field-hint">签名图片将作为附件写入该字段</p>
+      </div>
     </div>
 
     <!-- 签字人列表（多人模式） -->
@@ -93,7 +140,7 @@
           <div class="signer-index">{{ index + 1 }}</div>
           <div class="signer-fields">
             <div class="input-group">
-              <label class="input-label">选择签字人</label>
+              <label class="input-label">签字人姓名</label>
               <input
                 :value="signer.name"
                 type="text"
@@ -103,7 +150,7 @@
               />
             </div>
             <div class="input-group">
-              <label class="input-label">手机号{{ verifyIdentity ? '（必填）' : '（选填）' }}</label>
+              <label class="input-label">手机号{{ verifyIdentity ? '（必填，用于身份验证）' : '（选填）' }}</label>
               <input
                 :value="signer.phone || ''"
                 type="tel"
@@ -158,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Signer, SignMode } from '@shared/types'
+import type { Signer, SignMode, FieldConfig } from '@shared/types'
 
 const props = defineProps<{
   /** 确认单名称 */
@@ -169,6 +216,14 @@ const props = defineProps<{
   verifyIdentity: boolean
   /** 签字人列表 */
   signers: Signer[]
+  /** 可选字段列表 (用于手机号字段选择) */
+  availableFields: FieldConfig[]
+  /** 手机号字段名 */
+  phoneField: string
+  /** 签字状态回写字段名 */
+  statusField: string
+  /** 签名图片回写字段名 */
+  signatureField: string
 }>()
 
 const emit = defineEmits<{
@@ -176,6 +231,9 @@ const emit = defineEmits<{
   (e: 'update:signMode', value: SignMode): void
   (e: 'update:verifyIdentity', value: boolean): void
   (e: 'update:signers', value: Signer[]): void
+  (e: 'update:phoneField', value: string): void
+  (e: 'update:statusField', value: string): void
+  (e: 'update:signatureField', value: string): void
 }>()
 
 // ========== 签字人操作 ==========
@@ -252,6 +310,28 @@ function removeSigner(index: number): void {
   background: #f0f1f5;
 }
 
+/* 下拉选择 */
+.select-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #1f2329;
+  border: none;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238f959e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+.select-input:focus {
+  background-color: #f0f1f5;
+}
+
 /* 签字模式按钮 */
 .mode-buttons {
   display: flex;
@@ -284,6 +364,13 @@ function removeSigner(index: number): void {
 
 .mode-icon {
   flex-shrink: 0;
+}
+
+.mode-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #8f959e;
+  line-height: 1.5;
 }
 
 /* 复选框选项 */
@@ -340,6 +427,33 @@ function removeSigner(index: number): void {
   color: #8f959e;
 }
 
+/* 子配置区域 */
+.sub-config {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f2f3f5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-desc {
+  font-size: 12px;
+  color: #8f959e;
+  margin-bottom: 4px;
+}
+
+.input-label {
+  font-size: 12px;
+  color: #8f959e;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: #c9cdd4;
+  line-height: 1.4;
+}
+
 /* 签字人列表 */
 .signer-list {
   display: flex;
@@ -382,11 +496,6 @@ function removeSigner(index: number): void {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-.input-label {
-  font-size: 12px;
-  color: #8f959e;
 }
 
 .remove-btn {

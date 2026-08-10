@@ -3,11 +3,11 @@
  * 挂载于 /api/sessions
  *
  * 端点:
- *   POST /                           - 创建签名会话
- *   GET  /:sessionId                 - 获取会话基本信息
- *   GET  /:sessionId/records/:recordId - 获取记录签字页面数据
- *   GET  /:sessionId/status          - 获取会话签字状态概览
- *   POST /:sessionId/send-code       - 发送验证码 (H5 端身份验证)
+ *   POST /                              - 创建签名会话
+ *   GET  /:sessionId                     - 获取会话基本信息
+ *   POST /:sessionId/verify-phone        - 手机号身份验证 (免费方案)
+ *   GET  /:sessionId/records/:recordId    - 获取记录签字页面数据
+ *   GET  /:sessionId/status               - 获取会话签字状态概览
  */
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,6 +17,8 @@ import {
   createSession,
   getSignRecord,
   getSignRecordsBySession,
+  getSignRecordsBySigner,
+  getSignRecordsByRecord,
   createSignRecord,
   markRecordViewed,
   type SessionRow,
@@ -31,6 +33,8 @@ import type {
   RecordSignStatus,
   FieldConfig,
   Signer,
+  SignerStatus,
+  VerifyPhoneResponse,
   ApiResponse,
 } from '../../../../shared/types';
 
@@ -65,6 +69,9 @@ function parseSessionRow(row: SessionRow) {
     signers: JSON.parse(row.signers) as Signer[],
     record_ids: JSON.parse(row.record_ids) as string[],
     access_token: row.access_token,
+    phone_field: row.phone_field,
+    status_field: row.status_field,
+    signature_field: row.signature_field,
     created_at: row.created_at,
     expires_at: row.expires_at,
   };
@@ -90,24 +97,6 @@ function transformRecordData(
   return result;
 }
 
-// ==================== 验证码存储 (内存, 5 分钟过期) ====================
-
-interface CodeEntry {
-  code: string;
-  expiresAt: number;
-}
-const verificationCodes = new Map<string, CodeEntry>();
-
-// 定期清理过期验证码
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of verificationCodes) {
-    if (entry.expiresAt < now) {
-      verificationCodes.delete(key);
-    }
-  }
-}, 60_000);
-
 // ==================== 路由 ====================
 
 /**
@@ -115,6 +104,11 @@ setInterval(() => {
  *
  * 请求体: CreateSessionRequest
  * 响应:   CreateSessionResponse
+ *
+ * 会签模式 (signMode=multi):
+ *   为每个 recordId × 每个 signer 创建独立的签字记录
+ * 单签模式 (signMode=single):
+ *   为每个 recordId 创建一条签字记录
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
@@ -138,6 +132,9 @@ router.post('/', async (req: Request, res: Response) => {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 天有效期
 
+    // 提取回写配置
+    const writebackConfig = body.writebackConfig || {};
+
     // 存储会话
     createSession({
       id: sessionId,
@@ -151,32 +148,57 @@ router.post('/', async (req: Request, res: Response) => {
       signers: JSON.stringify(body.signers || []),
       record_ids: JSON.stringify(body.recordIds),
       access_token: body.accessToken || null,
+      phone_field: body.phoneField || null,
+      status_field: writebackConfig.statusField || '签字状态',
+      signature_field: writebackConfig.signatureField || '签名图片',
       created_at: now.toISOString(),
       expires_at: expiresAt.toISOString(),
     });
 
-    // 为每个 recordId 创建签字记录, 并分配签字人 (轮询)
+    // 创建签字记录
     const signers: Signer[] = body.signers || [];
-    for (let i = 0; i < body.recordIds.length; i++) {
-      const recordId = body.recordIds[i];
-      const signer = signers.length > 0 ? signers[i % signers.length] : null;
+    const isMulti = (body.signMode || 'single') === 'multi';
 
-      createSignRecord({
-        id: uuidv4(),
-        session_id: sessionId,
-        record_id: recordId,
-        status: 'pending',
-        signer_name: signer?.name || null,
-        signer_phone: signer?.phone || null,
-        signature_path: null,
-        signed_at: null,
-        created_at: now.toISOString(),
-      });
+    for (const recordId of body.recordIds) {
+      if (isMulti && signers.length > 0) {
+        // 会签模式: 为每个签字人创建独立记录
+        for (const signer of signers) {
+          createSignRecord({
+            id: uuidv4(),
+            session_id: sessionId,
+            record_id: recordId,
+            signer_id: signer.id,
+            status: 'pending',
+            signer_name: signer.name,
+            signer_phone: signer.phone || null,
+            signature_path: null,
+            signed_at: null,
+            created_at: now.toISOString(),
+          });
+        }
+      } else {
+        // 单签模式: 每条记录一个签字人 (轮询分配或无指定)
+        const signer = signers.length > 0
+          ? signers[body.recordIds.indexOf(recordId) % signers.length]
+          : null;
+
+        createSignRecord({
+          id: uuidv4(),
+          session_id: sessionId,
+          record_id: recordId,
+          signer_id: signer?.id || null,
+          status: 'pending',
+          signer_name: signer?.name || null,
+          signer_phone: signer?.phone || null,
+          signature_path: null,
+          signed_at: null,
+          created_at: now.toISOString(),
+        });
+      }
     }
 
-    // 生成分享 URL 和二维码
-    const firstRecordId = body.recordIds[0];
-    const shareUrl = `${BASE_URL}/h5/${sessionId}/${firstRecordId}`;
+    // 生成分享 URL (二维码指向身份验证页面, 不含 recordId)
+    const shareUrl = `${BASE_URL}/h5/#/v/${sessionId}`;
     const qrCodeUrl = await generateQRCode(shareUrl);
 
     const response: CreateSessionResponse = {
@@ -225,7 +247,158 @@ router.get('/:sessionId', (req: Request, res: Response) => {
 });
 
 /**
+ * POST /:sessionId/verify-phone - 手机号身份验证 (免费方案)
+ *
+ * 通过手机号匹配表格中的签字人, 无需发送短信验证码
+ *
+ * 请求体: { phone: string }
+ * 响应:   VerifyPhoneResponse
+ */
+router.post('/:sessionId/verify-phone', async (req: Request, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    const { phone } = req.body as { phone: string };
+
+    const row = getSession(sessionId);
+    if (!row) {
+      sendError(res, '会话不存在');
+      return;
+    }
+
+    // 检查会话是否过期
+    if (new Date(row.expires_at) < new Date()) {
+      sendError(res, '会话已过期');
+      return;
+    }
+
+    // 手机号格式校验
+    if (!phone || !/^1\d{10}$/.test(phone)) {
+      sendError(res, '手机号格式不正确');
+      return;
+    }
+
+    const session = parseSessionRow(row);
+    const signers = session.signers;
+
+    // 方式1: 匹配 signers 列表中预配置的手机号
+    let matchedSigner: Signer | undefined;
+    for (const s of signers) {
+      if (s.phone && s.phone === phone) {
+        matchedSigner = s;
+        break;
+      }
+    }
+
+    // 方式2: 如果未在 signers 中匹配到, 且配置了 phone_field,
+    // 从飞书表格记录中按手机号字段查找对应签字人
+    if (!matchedSigner && session.phone_field && session.access_token) {
+      // 从飞书获取所有记录, 查找手机号匹配的记录
+      for (const recordId of session.record_ids) {
+        try {
+          const rawData = await getRecord(
+            session.access_token,
+            session.app_token,
+            session.table_id,
+            recordId
+          );
+
+          // 获取手机号字段的值
+          const phoneValue = rawData[session.phone_field];
+          const phoneStr = typeof phoneValue === 'string'
+            ? phoneValue
+            : typeof phoneValue === 'object' && phoneValue !== null
+              ? String((phoneValue as Record<string, unknown>).text || '')
+              : String(phoneValue || '');
+
+          if (phoneStr === phone) {
+            // 找到匹配的记录, 使用记录中的姓名字段作为签字人
+            const nameField = session.fields_config.find(
+              f => f.name.includes('姓名') || f.name.includes('名字') || f.name.includes('名称')
+            );
+            const nameValue = nameField ? rawData[nameField.name] : null;
+            const nameStr = typeof nameValue === 'string'
+              ? nameValue
+              : typeof nameValue === 'object' && nameValue !== null
+                ? String((nameValue as Record<string, unknown>).text || '')
+                : recordId;
+
+            matchedSigner = {
+              id: recordId, // 使用 recordId 作为 signerId
+              name: nameStr || `用户${phone.slice(-4)}`,
+              phone,
+            };
+            break;
+          }
+        } catch (err) {
+          console.error('[验证手机号] 获取飞书记录失败:', err);
+        }
+      }
+    }
+
+    if (!matchedSigner) {
+      const response: VerifyPhoneResponse = {
+        verified: false,
+        formName: session.form_name,
+        signMode: session.sign_mode as 'single' | 'multi',
+      };
+      sendSuccess(res, response);
+      return;
+    }
+
+    // 获取该签字人的所有签字记录
+    const signerRecords = getSignRecordsBySigner(sessionId, matchedSigner.id);
+
+    // 如果该签字人在 sign_records 中没有记录 (可能是飞书表格匹配的方式),
+    // 则创建临时记录
+    if (signerRecords.length === 0) {
+      // 为该签字人在所有记录上创建 pending 状态
+      const now = new Date().toISOString();
+      for (const recordId of session.record_ids) {
+        createSignRecord({
+          id: uuidv4(),
+          session_id: sessionId,
+          record_id: recordId,
+          signer_id: matchedSigner.id,
+          status: 'pending',
+          signer_name: matchedSigner.name,
+          signer_phone: phone,
+          signature_path: null,
+          signed_at: null,
+          created_at: now,
+        });
+      }
+    }
+
+    // 重新获取签字记录
+    const updatedRecords = getSignRecordsBySigner(sessionId, matchedSigner.id);
+
+    const response: VerifyPhoneResponse = {
+      verified: true,
+      signer: {
+        signerId: matchedSigner.id,
+        name: matchedSigner.name,
+        phone,
+        records: updatedRecords.map(r => ({
+          recordId: r.record_id,
+          isSigned: r.status === 'signed',
+          signedAt: r.signed_at || undefined,
+        })),
+      },
+      formName: session.form_name,
+      signMode: session.sign_mode as 'single' | 'multi',
+    };
+
+    sendSuccess(res, response);
+  } catch (err) {
+    console.error('[验证手机号] 失败:', err);
+    sendError(res, err instanceof Error ? err.message : '验证失败');
+  }
+});
+
+/**
  * GET /:sessionId/records/:recordId - 获取记录签字页面数据
+ *
+ * 查询参数: ?signerId=xxx (会签模式下指定签字人)
  *
  * 返回 SessionDetail, 额外包含 signatureUrl 字段 (已签字时)
  */
@@ -234,6 +407,7 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const { sessionId, recordId } = req.params;
+      const signerId = req.query.signerId as string | undefined;
       const row = getSession(sessionId);
 
       if (!row) {
@@ -255,15 +429,17 @@ router.get(
       }
 
       const session = parseSessionRow(row);
-      const signRecord = getSignRecord(sessionId, recordId);
+
+      // 获取签字记录 (按 signerId 或取第一条)
+      const signRecord = getSignRecord(sessionId, recordId, signerId);
 
       if (!signRecord) {
         sendError(res, '签字记录不存在');
         return;
       }
 
-      // 标记为已查看 (仅当状态为 pending 时)
-      markRecordViewed(sessionId, recordId);
+      // 标记为已查看
+      markRecordViewed(sessionId, recordId, signerId);
 
       // 从飞书获取记录数据 (如果有 accessToken)
       let recordData: Record<string, unknown> = {};
@@ -285,7 +461,7 @@ router.get(
       // 当前签字人
       const currentSigner: Signer | undefined = signRecord.signer_name
         ? {
-            id: recordId,
+            id: signRecord.signer_id || recordId,
             name: signRecord.signer_name,
             phone: signRecord.signer_phone || undefined,
           }
@@ -299,6 +475,21 @@ router.get(
           ? `${BASE_URL}/uploads/${path.basename(signRecord.signature_path)}`
           : undefined;
 
+      // 会签模式: 获取该记录的所有签字人状态
+      let allSigners: SignerStatus[] | undefined;
+      if (session.sign_mode === 'multi') {
+        const allRecords = getSignRecordsByRecord(sessionId, recordId);
+        allSigners = allRecords.map(r => ({
+          signerId: r.signer_id || '',
+          name: r.signer_name || '',
+          isSigned: r.status === 'signed',
+          signedAt: r.signed_at || undefined,
+          signatureUrl: r.signature_path
+            ? `${BASE_URL}/uploads/${path.basename(r.signature_path)}`
+            : undefined,
+        }));
+      }
+
       const detail: SessionDetail & { signatureUrl?: string } = {
         sessionId,
         formName: session.form_name,
@@ -310,6 +501,7 @@ router.get(
         currentSigner,
         isSigned,
         signedAt: signRecord.signed_at || undefined,
+        allSigners,
         signatureUrl,
       };
 
@@ -338,8 +530,51 @@ router.get('/:sessionId/status', (req: Request, res: Response) => {
       return;
     }
 
+    const session = parseSessionRow(row);
     const signRecords = getSignRecordsBySession(sessionId);
 
+    // 会签模式: 每条记录可能有多个签字人
+    if (session.sign_mode === 'multi') {
+      // 按 recordId 分组
+      const recordMap = new Map<string, SignerStatus[]>();
+      for (const r of signRecords) {
+        if (!recordMap.has(r.record_id)) {
+          recordMap.set(r.record_id, []);
+        }
+        recordMap.get(r.record_id)!.push({
+          signerId: r.signer_id || '',
+          name: r.signer_name || '',
+          isSigned: r.status === 'signed',
+          signedAt: r.signed_at || undefined,
+          signatureUrl: r.signature_path
+            ? `${BASE_URL}/uploads/${path.basename(r.signature_path)}`
+            : undefined,
+        });
+      }
+
+      const records: RecordSignStatus[] = session.record_ids.map(recordId => {
+        const signers = recordMap.get(recordId) || [];
+        const allSigned = signers.length > 0 && signers.every(s => s.isSigned);
+        const anySigned = signers.some(s => s.isSigned);
+        return {
+          recordId,
+          status: allSigned ? 'signed' : anySigned ? 'viewed' : 'pending',
+          signers,
+        };
+      });
+
+      const status: SessionStatus = {
+        sessionId,
+        totalRecords: session.record_ids.length,
+        signedCount: records.filter(r => r.status === 'signed').length,
+        records,
+      };
+
+      sendSuccess(res, status);
+      return;
+    }
+
+    // 单签模式
     const records: RecordSignStatus[] = signRecords.map((r) => ({
       recordId: r.record_id,
       status: r.status as 'pending' | 'viewed' | 'signed' | 'rejected',
@@ -360,47 +595,6 @@ router.get('/:sessionId/status', (req: Request, res: Response) => {
     sendSuccess(res, status);
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : '获取状态失败');
-  }
-});
-
-/**
- * POST /:sessionId/send-code - 发送验证码
- *
- * H5 端身份验证: 生成 6 位验证码并 "发送" 到指定手机号
- * (当前为开发模式, 验证码输出到控制台)
- */
-router.post('/:sessionId/send-code', (req: Request, res: Response) => {
-  try {
-    const { sessionId } = req.params;
-    const { phone } = req.body as { phone: string };
-
-    const row = getSession(sessionId);
-    if (!row) {
-      sendError(res, '会话不存在');
-      return;
-    }
-
-    // 手机号格式校验
-    if (!phone || !/^1\d{10}$/.test(phone)) {
-      sendError(res, '手机号格式不正确');
-      return;
-    }
-
-    // 生成 6 位验证码
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 分钟有效
-
-    verificationCodes.set(`${sessionId}:${phone}`, { code, expiresAt });
-
-    // TODO: 接入短信服务商发送验证码
-    // 当前为开发模式, 输出到控制台
-    console.log(
-      `[验证码] 会话=${sessionId} 手机号=${phone} 验证码=${code}`
-    );
-
-    sendSuccess(res, { sent: true });
-  } catch (err) {
-    sendError(res, err instanceof Error ? err.message : '发送验证码失败');
   }
 });
 

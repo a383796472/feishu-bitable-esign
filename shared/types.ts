@@ -21,6 +21,14 @@ export interface FieldConfig {
   order: number
 }
 
+/** 回写配置 - 指定飞书表格中用于回写的字段 */
+export interface WritebackConfig {
+  /** 签字状态字段名 (写入 "已签"/"未签") */
+  statusField: string
+  /** 签名图片附件字段名 */
+  signatureField: string
+}
+
 /** 创建签名会话请求 (Widget -> Server) */
 export interface CreateSessionRequest {
   /** Bitable 应用 ID */
@@ -43,6 +51,10 @@ export interface CreateSessionRequest {
   recordIds: string[]
   /** 飞书开放平台 access_token (用于回写) */
   accessToken?: string
+  /** 手机号字段名 (用于身份验证时匹配) */
+  phoneField?: string
+  /** 回写配置 */
+  writebackConfig?: WritebackConfig
 }
 
 /** 创建签名会话响应 (Server -> Widget) */
@@ -50,6 +62,36 @@ export interface CreateSessionResponse {
   sessionId: string
   qrCodeUrl: string
   shareUrl: string
+}
+
+/** 签字人验证结果 */
+export interface VerifiedSigner {
+  signerId: string
+  name: string
+  phone: string
+  /** 该签字人需要签的记录列表 */
+  records: SignerRecordItem[]
+}
+
+/** 签字人的记录项 */
+export interface SignerRecordItem {
+  recordId: string
+  isSigned: boolean
+  signedAt?: string
+}
+
+/** 手机号验证请求 (H5 -> Server) */
+export interface VerifyPhoneRequest {
+  phone: string
+}
+
+/** 手机号验证响应 (Server -> H5) */
+export interface VerifyPhoneResponse {
+  verified: boolean
+  signer?: VerifiedSigner
+  /** 会话基本信息 */
+  formName: string
+  signMode: SignMode
 }
 
 /** 会话详情 (Server -> H5) */
@@ -69,6 +111,17 @@ export interface SessionDetail {
   isSigned: boolean
   /** 签字时间 */
   signedAt?: string
+  /** 所有签字人状态 (会签模式) */
+  allSigners?: SignerStatus[]
+}
+
+/** 签字人状态 (用于会签模式显示) */
+export interface SignerStatus {
+  signerId: string
+  name: string
+  isSigned: boolean
+  signedAt?: string
+  signatureUrl?: string
 }
 
 /** 提交签名请求 (H5 -> Server) */
@@ -78,6 +131,8 @@ export interface SubmitSignatureRequest {
   signatureData: string
   /** 签字人手机号 (身份验证时) */
   signerPhone?: string
+  /** 签字人 ID */
+  signerId?: string
   /** 签字人姓名 */
   signerName: string
 }
@@ -88,6 +143,8 @@ export interface SubmitSignatureResponse {
   message: string
   /** 签名回执 URL */
   receiptUrl?: string
+  /** 是否还有未签的记录 */
+  hasMoreRecords?: boolean
 }
 
 /** 签字状态 */
@@ -100,6 +157,8 @@ export interface RecordSignStatus {
   signedAt?: string
   signerName?: string
   signatureUrl?: string
+  /** 各签字人状态 (会签模式) */
+  signers?: SignerStatus[]
 }
 
 /** 会话状态概览 (Server -> Widget) */

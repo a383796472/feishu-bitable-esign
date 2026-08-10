@@ -11,9 +11,11 @@ import fs from 'fs';
 import {
   getSession,
   getSignRecord,
+  getSignRecordsBySigner,
+  getSignRecordsByRecord,
   updateSignRecordStatus,
 } from '../db';
-import { uploadFile } from '../services/bitable';
+import { uploadFile, updateRecord } from '../services/bitable';
 import type {
   SubmitSignatureRequest,
   SubmitSignatureResponse,
@@ -48,11 +50,11 @@ function sendError(res: Response, message: string, code = 1): void {
  *
  * 流程:
  *   1. 验证 recordId 属于该会话
- *   2. 如果 verifyIdentity=true, 验证 signerPhone 匹配
- *   3. 保存签名图片 base64 到文件 uploads/${sessionId}_${recordId}.png
- *   4. 通过 bitable service 回写 (如果有 accessToken)
+ *   2. 如果 verifyIdentity=true, 验证 signerPhone 匹配 (手机号匹配, 免费)
+ *   3. 保存签名图片 base64 到文件
+ *   4. 通过 bitable service 回写: 签字状态 + 签名图片附件
  *   5. 更新 sign_records 状态为 signed
- *   6. 返回 success + receiptUrl
+ *   6. 返回 success + receiptUrl + hasMoreRecords
  */
 router.post('/:sessionId/sign', async (req: Request, res: Response) => {
   try {
@@ -93,8 +95,13 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
       return;
     }
 
-    // 获取签字记录
-    const signRecord = getSignRecord(sessionId, body.recordId);
+    // 获取签字记录 (按 signerId 或取第一条)
+    const signRecord = getSignRecord(
+      sessionId,
+      body.recordId,
+      body.signerId
+    );
+
     if (!signRecord) {
       sendError(res, '签字记录不存在');
       return;
@@ -106,7 +113,7 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
       return;
     }
 
-    // 身份验证: 如果开启, 验证手机号匹配
+    // 身份验证: 如果开启, 验证手机号匹配 (免费方案, 无需短信)
     const verifyIdentity = !!row.verify_identity;
     if (verifyIdentity) {
       if (!body.signerPhone) {
@@ -126,7 +133,9 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
     }
 
     // 保存签名图片 (base64 -> PNG 文件)
-    const fileName = `${sessionId}_${body.recordId}.png`;
+    // 文件名包含 signerId 以区分会签模式中不同签字人的签名
+    const signerSuffix = body.signerId ? `_${body.signerId}` : '';
+    const fileName = `${sessionId}_${body.recordId}${signerSuffix}.png`;
     const filePath = path.join(UPLOADS_DIR, fileName);
 
     // 移除 data URL 前缀, 解码 base64
@@ -136,27 +145,68 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
     );
     fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
 
+    // 更新签字记录状态为已签
+    const signedAt = new Date().toISOString();
+    updateSignRecordStatus(signRecord.id, 'signed', filePath, signedAt);
+
     // 回写到飞书 Bitable (如果有 accessToken)
+    const statusField = row.status_field || '签字状态';
+    const signatureField = row.signature_field || '签名图片';
+
     if (row.access_token) {
       try {
+        // Step 1: 上传签名图片附件
         await uploadFile(
           row.access_token,
           row.app_token,
           row.table_id,
           body.recordId,
-          '签名',
+          signatureField,
           filePath
         );
-        console.log(`[回写飞书] 成功: session=${sessionId} record=${body.recordId}`);
+
+        // Step 2: 更新签字状态字段
+        let statusValue = '已签';
+        if (row.sign_mode === 'multi') {
+          // 会签模式: 检查该记录的所有签字人状态
+          const recordSigners = getSignRecordsByRecord(sessionId, body.recordId);
+          const allSigned = recordSigners.length > 0 && recordSigners.every(r => r.status === 'signed');
+          const anySigned = recordSigners.some(r => r.status === 'signed');
+
+          if (allSigned) {
+            statusValue = '全部已签';
+          } else if (anySigned) {
+            statusValue = '部分已签';
+          } else {
+            statusValue = '未签';
+          }
+        }
+
+        await updateRecord(
+          row.access_token,
+          row.app_token,
+          row.table_id,
+          body.recordId,
+          { [statusField]: statusValue }
+        );
+
+        console.log(
+          `[回写飞书] 成功: session=${sessionId} record=${body.recordId} status=${statusValue}`
+        );
       } catch (err) {
         // 回写失败不阻断流程, 签名已本地保存
         console.error('[回写飞书] 失败:', err);
       }
     }
 
-    // 更新签字记录状态
-    const signedAt = new Date().toISOString();
-    updateSignRecordStatus(signRecord.id, 'signed', filePath, signedAt);
+    // 检查是否还有未签的记录
+    let hasMoreRecords = false;
+    if (body.signerId) {
+      const signerRecords = getSignRecordsBySigner(sessionId, body.signerId);
+      hasMoreRecords = signerRecords.some(
+        r => r.record_id !== body.recordId && r.status !== 'signed'
+      );
+    }
 
     // 构建回执 URL
     const receiptUrl = `${BASE_URL}/uploads/${fileName}`;
@@ -165,6 +215,7 @@ router.post('/:sessionId/sign', async (req: Request, res: Response) => {
       success: true,
       message: '签字成功',
       receiptUrl,
+      hasMoreRecords,
     };
 
     sendSuccess(res, response);

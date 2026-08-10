@@ -16,38 +16,66 @@ db.pragma('journal_mode = WAL');
 // 创建数据表
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
-    id            TEXT PRIMARY KEY,
-    app_token     TEXT,
-    table_id      TEXT,
-    table_name    TEXT,
-    form_name     TEXT,
-    sign_mode     TEXT,
+    id              TEXT PRIMARY KEY,
+    app_token       TEXT,
+    table_id        TEXT,
+    table_name      TEXT,
+    form_name       TEXT,
+    sign_mode       TEXT,
     verify_identity INTEGER DEFAULT 0,
-    fields_config TEXT,
-    signers       TEXT,
-    record_ids    TEXT,
-    access_token  TEXT,
-    created_at    TEXT,
-    expires_at    TEXT
+    fields_config   TEXT,
+    signers         TEXT,
+    record_ids      TEXT,
+    access_token    TEXT,
+    phone_field     TEXT,
+    status_field    TEXT,
+    signature_field TEXT,
+    created_at      TEXT,
+    expires_at      TEXT
   );
 
   CREATE TABLE IF NOT EXISTS sign_records (
-    id             TEXT PRIMARY KEY,
-    session_id     TEXT NOT NULL,
-    record_id      TEXT NOT NULL,
-    status         TEXT DEFAULT 'pending',
-    signer_name    TEXT,
-    signer_phone   TEXT,
-    signature_path TEXT,
-    signed_at      TEXT,
-    created_at     TEXT
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    record_id       TEXT NOT NULL,
+    signer_id       TEXT,
+    status          TEXT DEFAULT 'pending',
+    signer_name     TEXT,
+    signer_phone    TEXT,
+    signature_path  TEXT,
+    signed_at       TEXT,
+    created_at      TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_sign_records_session
     ON sign_records(session_id);
   CREATE INDEX IF NOT EXISTS idx_sign_records_session_record
     ON sign_records(session_id, record_id);
+  CREATE INDEX IF NOT EXISTS idx_sign_records_signer
+    ON sign_records(session_id, signer_id);
 `);
+
+// ==================== 迁移: 为旧表添加新列 ====================
+
+/**
+ * 安全添加列 (如果列不存在)
+ */
+function addColumnIfNotExists(table: string, column: string, type: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  const exists = columns.some(c => c.name === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type};`);
+    console.log(`[DB] 已添加列: ${table}.${column}`);
+  }
+}
+
+// 迁移 sessions 表
+addColumnIfNotExists('sessions', 'phone_field', 'TEXT');
+addColumnIfNotExists('sessions', 'status_field', 'TEXT');
+addColumnIfNotExists('sessions', 'signature_field', 'TEXT');
+
+// 迁移 sign_records 表
+addColumnIfNotExists('sign_records', 'signer_id', 'TEXT');
 
 // ==================== 类型定义 ====================
 
@@ -64,6 +92,9 @@ export interface SessionRow {
   signers: string;
   record_ids: string;
   access_token: string | null;
+  phone_field: string | null;
+  status_field: string | null;
+  signature_field: string | null;
   created_at: string;
   expires_at: string;
 }
@@ -73,6 +104,7 @@ export interface SignRecordRow {
   id: string;
   session_id: string;
   record_id: string;
+  signer_id: string | null;
   status: string;
   signer_name: string | null;
   signer_phone: string | null;
@@ -94,6 +126,9 @@ export interface CreateSessionParams {
   signers: string;
   record_ids: string;
   access_token: string | null;
+  phone_field: string | null;
+  status_field: string | null;
+  signature_field: string | null;
   created_at: string;
   expires_at: string;
 }
@@ -103,6 +138,7 @@ export interface CreateSignRecordParams {
   id: string;
   session_id: string;
   record_id: string;
+  signer_id: string | null;
   status: string;
   signer_name: string | null;
   signer_phone: string | null;
@@ -129,27 +165,65 @@ export function createSession(params: CreateSessionParams): void {
     INSERT INTO sessions (
       id, app_token, table_id, table_name, form_name,
       sign_mode, verify_identity, fields_config, signers,
-      record_ids, access_token, created_at, expires_at
+      record_ids, access_token, phone_field, status_field,
+      signature_field, created_at, expires_at
     ) VALUES (
       @id, @app_token, @table_id, @table_name, @form_name,
       @sign_mode, @verify_identity, @fields_config, @signers,
-      @record_ids, @access_token, @created_at, @expires_at
+      @record_ids, @access_token, @phone_field, @status_field,
+      @signature_field, @created_at, @expires_at
     )
   `);
   stmt.run(params);
 }
 
 /**
- * 获取会话下的单条签字记录
+ * 获取会话下的单条签字记录 (按 recordId, 兼容单签和会签)
+ * 单签模式: signer_id 为 null 的记录
+ * 会签模式: 按 signer_id 查找
  */
 export function getSignRecord(
   sessionId: string,
-  recordId: string
+  recordId: string,
+  signerId?: string
 ): SignRecordRow | undefined {
+  if (signerId) {
+    const stmt = db.prepare(
+      'SELECT * FROM sign_records WHERE session_id = ? AND record_id = ? AND signer_id = ?'
+    );
+    return stmt.get(sessionId, recordId, signerId) as SignRecordRow | undefined;
+  }
+  // 兼容: 取该 record 的第一条记录
   const stmt = db.prepare(
-    'SELECT * FROM sign_records WHERE session_id = ? AND record_id = ?'
+    'SELECT * FROM sign_records WHERE session_id = ? AND record_id = ? LIMIT 1'
   );
   return stmt.get(sessionId, recordId) as SignRecordRow | undefined;
+}
+
+/**
+ * 获取某记录的所有签字记录 (会签模式)
+ */
+export function getSignRecordsByRecord(
+  sessionId: string,
+  recordId: string
+): SignRecordRow[] {
+  const stmt = db.prepare(
+    'SELECT * FROM sign_records WHERE session_id = ? AND record_id = ? ORDER BY signed_at ASC'
+  );
+  return stmt.all(sessionId, recordId) as SignRecordRow[];
+}
+
+/**
+ * 获取某签字人在会话下的所有签字记录
+ */
+export function getSignRecordsBySigner(
+  sessionId: string,
+  signerId: string
+): SignRecordRow[] {
+  const stmt = db.prepare(
+    'SELECT * FROM sign_records WHERE session_id = ? AND signer_id = ? ORDER BY created_at ASC'
+  );
+  return stmt.all(sessionId, signerId) as SignRecordRow[];
 }
 
 /**
@@ -168,11 +242,11 @@ export function getSignRecordsBySession(sessionId: string): SignRecordRow[] {
 export function createSignRecord(params: CreateSignRecordParams): void {
   const stmt = db.prepare(`
     INSERT INTO sign_records (
-      id, session_id, record_id, status,
+      id, session_id, record_id, signer_id, status,
       signer_name, signer_phone, signature_path,
       signed_at, created_at
     ) VALUES (
-      @id, @session_id, @record_id, @status,
+      @id, @session_id, @record_id, @signer_id, @status,
       @signer_name, @signer_phone, @signature_path,
       @signed_at, @created_at
     )
@@ -202,14 +276,24 @@ export function updateSignRecordStatus(
  */
 export function markRecordViewed(
   sessionId: string,
-  recordId: string
+  recordId: string,
+  signerId?: string
 ): void {
-  const stmt = db.prepare(`
-    UPDATE sign_records
-    SET status = 'viewed'
-    WHERE session_id = ? AND record_id = ? AND status = 'pending'
-  `);
-  stmt.run(sessionId, recordId);
+  if (signerId) {
+    const stmt = db.prepare(`
+      UPDATE sign_records
+      SET status = 'viewed'
+      WHERE session_id = ? AND record_id = ? AND signer_id = ? AND status = 'pending'
+    `);
+    stmt.run(sessionId, recordId, signerId);
+  } else {
+    const stmt = db.prepare(`
+      UPDATE sign_records
+      SET status = 'viewed'
+      WHERE session_id = ? AND record_id = ? AND status = 'pending'
+    `);
+    stmt.run(sessionId, recordId);
+  }
 }
 
 export default db;

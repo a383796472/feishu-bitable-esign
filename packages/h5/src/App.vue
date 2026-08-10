@@ -18,67 +18,114 @@
       <div class="error-icon">
         <svg viewBox="0 0 64 64" width="64" height="64">
           <circle cx="32" cy="32" r="30" fill="#F54A45" />
-          <path
-            d="M32 18V38"
-            stroke="#fff"
-            stroke-width="3.5"
-            stroke-linecap="round"
-          />
+          <path d="M32 18V38" stroke="#fff" stroke-width="3.5" stroke-linecap="round" />
           <circle cx="32" cy="46" r="2.5" fill="#fff" />
         </svg>
       </div>
       <p class="state-text">{{ errorMsg }}</p>
-      <button class="retry-btn" @click="loadData">重新加载</button>
+      <button class="retry-btn" @click="handleRetry">重新加载</button>
     </div>
 
-    <!-- ========== 成功状态 ========== -->
-    <div v-else-if="pageState === 'success'" class="state-page success-page">
-      <div class="success-icon">
-        <svg viewBox="0 0 64 64" width="72" height="72">
-          <circle cx="32" cy="32" r="30" fill="#1DC981" />
-          <path
-            d="M20 33L28 41L44 25"
-            stroke="#fff"
-            stroke-width="3.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            fill="none"
-          />
-        </svg>
-      </div>
-      <p class="success-title">签字确认成功</p>
-      <p class="success-desc">您的电子签名已提交成功</p>
-      <button v-if="receiptUrl" class="receipt-btn" @click="viewReceipt">
-        查看回执
-      </button>
-      <button class="close-btn" @click="handleClose">关闭页面</button>
-    </div>
-
-    <!-- ========== 主页面 ========== -->
-    <template v-else-if="sessionData">
-      <!-- 顶部导航栏 -->
+    <!-- ========== 身份验证页面 ========== -->
+    <div v-else-if="pageState === 'verify'" class="verify-page">
       <header class="nav-bar">
-        <button class="nav-btn" @click="handleClose" aria-label="关闭">
-          <svg viewBox="0 0 24 24" width="22" height="22">
-            <path
-              d="M6 6L18 18M18 6L6 18"
-              stroke="#fff"
-              stroke-width="1.8"
-              stroke-linecap="round"
+        <span class="nav-title">身份验证</span>
+      </header>
+      <main class="content">
+        <div class="card verify-card">
+          <div class="verify-icon">
+            <svg viewBox="0 0 48 48" width="48" height="48">
+              <circle cx="24" cy="24" r="22" fill="rgba(51,112,255,0.08)" />
+              <path d="M24 14a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm0 16c-7 0-12 3-12 6v2h24v-2c0-3-5-6-12-6z" fill="#3370ff" />
+            </svg>
+          </div>
+          <p class="verify-title">请验证您的身份</p>
+          <p class="verify-desc">输入您的手机号以确认签字身份</p>
+          <div class="input-group">
+            <input
+              v-model="phoneInput"
+              type="tel"
+              maxlength="11"
+              placeholder="请输入手机号"
+              class="text-input"
+              inputmode="numeric"
+              @keyup.enter="handleVerify"
             />
+            <button
+              class="verify-btn"
+              :disabled="!isPhoneInputValid || verifying"
+              @click="handleVerify"
+            >
+              {{ verifying ? '验证中...' : '验证身份' }}
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ========== 记录列表页面 ========== -->
+    <div v-else-if="pageState === 'records' && verifiedSigner" class="records-page">
+      <header class="nav-bar">
+        <button class="nav-btn" @click="handleBackToVerify" aria-label="返回">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <path d="M15 6L9 12L15 18" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+          </svg>
+        </button>
+        <span class="nav-title">签字列表</span>
+        <div style="width: 40px"></div>
+      </header>
+      <main class="content">
+        <!-- 签字人信息 -->
+        <div class="card signer-info-card">
+          <div class="signer-avatar">{{ verifiedSigner.name.charAt(0) }}</div>
+          <div class="signer-info">
+            <p class="signer-name">{{ verifiedSigner.name }}</p>
+            <p class="signer-phone">{{ maskPhone(verifiedSigner.phone) }}</p>
+          </div>
+        </div>
+
+        <!-- 记录列表 -->
+        <div class="card records-list-card">
+          <div class="card-title">需要签字的记录 ({{ verifiedSigner.records.length }})</div>
+          <div
+            v-for="(record, index) in verifiedSigner.records"
+            :key="record.recordId"
+            class="record-item"
+            :class="{ 'no-border': index === verifiedSigner.records.length - 1 }"
+            @click="handleSelectRecord(record)"
+          >
+            <div class="record-info">
+              <span class="record-name">记录 {{ index + 1 }}</span>
+              <span class="record-id">{{ record.recordId.slice(-8) }}</span>
+            </div>
+            <div class="record-status">
+              <span
+                class="status-tag"
+                :class="record.isSigned ? 'tag-signed' : 'tag-pending'"
+              >
+                {{ record.isSigned ? '已签' : '待签' }}
+              </span>
+              <svg viewBox="0 0 24 24" width="18" height="18" class="arrow-icon">
+                <path d="M9 6L15 12L9 18" stroke="#c9cdd4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ========== 签字表单页面 ========== -->
+    <div v-else-if="pageState === 'form' && sessionData" class="form-page">
+      <header class="nav-bar">
+        <button class="nav-btn" @click="handleBackToRecords" aria-label="返回">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <path d="M15 6L9 12L15 18" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
           </svg>
         </button>
         <span class="nav-title">签字确认</span>
-        <button class="nav-btn" @click="handleMore" aria-label="更多">
-          <svg viewBox="0 0 24 24" width="22" height="22">
-            <circle cx="5" cy="12" r="1.8" fill="#fff" />
-            <circle cx="12" cy="12" r="1.8" fill="#fff" />
-            <circle cx="19" cy="12" r="1.8" fill="#fff" />
-          </svg>
-        </button>
+        <div style="width: 40px"></div>
       </header>
 
-      <!-- 内容区域 -->
       <main class="content" :class="{ 'has-bottom-bar': !sessionData.isSigned }">
         <!-- 确认单标题 + 状态标签 -->
         <div class="form-header">
@@ -107,6 +154,32 @@
           </div>
         </div>
 
+        <!-- 会签状态展示 -->
+        <template v-if="sessionData.allSigners && sessionData.allSigners.length > 1">
+          <div class="card signers-status-card">
+            <div class="card-title">签字状态 (会签)</div>
+            <div
+              v-for="signer in sessionData.allSigners"
+              :key="signer.signerId"
+              class="signer-status-item"
+            >
+              <div class="signer-status-left">
+                <div
+                  class="signer-dot"
+                  :class="signer.isSigned ? 'dot-signed' : 'dot-pending'"
+                ></div>
+                <span class="signer-status-name">{{ signer.name }}</span>
+              </div>
+              <span
+                class="status-tag"
+                :class="signer.isSigned ? 'tag-signed' : 'tag-pending'"
+              >
+                {{ signer.isSigned ? '已签' : '待签' }}
+              </span>
+            </div>
+          </div>
+        </template>
+
         <!-- 已签字：展示签名图片 -->
         <template v-if="sessionData.isSigned">
           <div class="card signature-preview-card">
@@ -119,14 +192,6 @@
                 class="signature-img"
               />
               <div v-else class="no-signature">
-                <svg viewBox="0 0 48 48" width="32" height="32">
-                  <path
-                    d="M24 8v32M8 24h32"
-                    stroke="#c9cdd4"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                  />
-                </svg>
                 <span>签名图片暂不可用</span>
               </div>
             </div>
@@ -141,45 +206,12 @@
           </div>
         </template>
 
-        <!-- 未签字：身份验证 + 签名区域 -->
+        <!-- 未签字：签名区域 -->
         <template v-else>
-          <!-- 身份验证 -->
-          <div v-if="sessionData.verifyIdentity" class="card verify-card">
-            <div class="card-title">身份验证</div>
-            <div class="input-group">
-              <div class="input-row">
-                <input
-                  v-model="phone"
-                  type="tel"
-                  maxlength="11"
-                  placeholder="请输入手机号"
-                  class="text-input"
-                  inputmode="numeric"
-                />
-                <button
-                  class="code-btn"
-                  :disabled="countdown > 0 || !isPhoneValid"
-                  @click="handleGetCode"
-                >
-                  {{ countdown > 0 ? `${countdown}s` : '获取验证码' }}
-                </button>
-              </div>
-              <input
-                v-model="code"
-                type="tel"
-                maxlength="6"
-                placeholder="请输入6位验证码"
-                class="text-input"
-                inputmode="numeric"
-              />
-            </div>
-          </div>
-
-          <!-- 签名区域 -->
           <div class="card signature-card">
             <div class="signature-header">
               <span class="card-title">签字确认</span>
-              <span class="signature-hint">请在下方灰色区域内签字</span>
+              <span class="signature-hint">请在下方区域内签字</span>
             </div>
             <SignaturePad
               ref="padRef"
@@ -202,7 +234,26 @@
           {{ submitting ? '提交中...' : '提交签字' }}
         </button>
       </footer>
-    </template>
+    </div>
+
+    <!-- ========== 成功状态 ========== -->
+    <div v-else-if="pageState === 'success'" class="state-page success-page">
+      <div class="success-icon">
+        <svg viewBox="0 0 64 64" width="72" height="72">
+          <circle cx="32" cy="32" r="30" fill="#1DC981" />
+          <path d="M20 33L28 41L44 25" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+        </svg>
+      </div>
+      <p class="success-title">签字确认成功</p>
+      <p class="success-desc">您的电子签名已提交成功</p>
+      <button v-if="receiptUrl" class="receipt-btn" @click="viewReceipt">
+        查看回执
+      </button>
+      <button v-if="hasMoreRecords" class="receipt-btn" @click="handleBackToRecords">
+        继续签下一条
+      </button>
+      <button class="close-btn" @click="handleClose">关闭页面</button>
+    </div>
 
     <!-- Toast 提示 -->
     <Transition name="toast">
@@ -214,52 +265,63 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import SignaturePad from './components/SignaturePad.vue'
-import { getSessionData, submitSignature, sendVerificationCode } from './api'
-import type { SessionDetail } from '@shared/types'
+import { verifyPhone, getSessionData, submitSignature } from './api'
+import type { SessionDetail, SignerStatus, VerifiedSigner } from '@shared/types'
 
 // ========== 类型定义 ==========
-type PageState = 'loading' | 'error' | 'form' | 'success'
+type PageState = 'loading' | 'error' | 'verify' | 'records' | 'form' | 'success'
 
 // ========== 路由参数 ==========
 const sessionId = ref('')
-const recordId = ref('')
+const currentRecordId = ref('')
+const currentSignerId = ref('')
 
 function parseRoute(): void {
-  // 1. 尝试 query 参数
-  const params = new URLSearchParams(window.location.search)
-  const qSession = params.get('sessionId')
-  const qRecord = params.get('recordId')
-  if (qSession && qRecord) {
-    sessionId.value = qSession
-    recordId.value = qRecord
-    return
-  }
-
-  // 2. 尝试 hash 路由
+  // 1. 尝试 hash 路由: #/v/:sessionId (验证页面) 或 #/s/:sessionId/:signerId/:recordId (直接签字)
   const hash = window.location.hash.slice(1)
   if (hash.startsWith('/')) {
-    const hashParts = hash.split('/').filter(Boolean)
-    if (hashParts.length >= 2) {
-      sessionId.value = hashParts[hashParts.length - 2]
-      recordId.value = hashParts[hashParts.length - 1]
+    const parts = hash.split('/').filter(Boolean)
+    if (parts.length >= 2 && parts[0] === 'v') {
+      sessionId.value = parts[1]
+      return
+    }
+    if (parts.length >= 4 && parts[0] === 's') {
+      sessionId.value = parts[1]
+      currentSignerId.value = parts[2]
+      currentRecordId.value = parts[3]
       return
     }
   }
 
-  // 3. 尝试 path 路由: /h5/:sessionId/:recordId
-  const pathname = window.location.pathname.replace(/\/+$/, '')
-  const parts = pathname.split('/')
-  const h5Index = parts.lastIndexOf('h5')
-  if (h5Index !== -1 && parts[h5Index + 1] && parts[h5Index + 2]) {
-    sessionId.value = parts[h5Index + 1]
-    recordId.value = parts[h5Index + 2]
+  // 2. 尝试 query 参数
+  const params = new URLSearchParams(window.location.search)
+  const qSession = params.get('sessionId')
+  if (qSession) {
+    sessionId.value = qSession
+    const qSigner = params.get('signerId')
+    const qRecord = params.get('recordId')
+    if (qSigner && qRecord) {
+      currentSignerId.value = qSigner
+      currentRecordId.value = qRecord
+    }
     return
   }
 
-  // 4. 回退：取路径最后两段
-  if (parts.length >= 2) {
-    sessionId.value = parts[parts.length - 2] || ''
-    recordId.value = parts[parts.length - 1] || ''
+  // 3. 尝试 path 路由: /h5/:sessionId/:recordId (兼容旧版)
+  const pathname = window.location.pathname.replace(/\/+$/, '')
+  const parts = pathname.split('/')
+  const h5Index = parts.lastIndexOf('h5')
+  if (h5Index !== -1 && parts[h5Index + 1]) {
+    sessionId.value = parts[h5Index + 1]
+    if (parts[h5Index + 2]) {
+      currentRecordId.value = parts[h5Index + 2]
+    }
+    return
+  }
+
+  // 4. 回退：取路径最后一段
+  if (parts.length >= 1) {
+    sessionId.value = parts[parts.length - 1] || ''
   }
 }
 
@@ -269,6 +331,7 @@ const errorMsg = ref('加载失败')
 const sessionData = ref<SessionDetail | null>(null)
 const signatureUrl = ref('')
 const receiptUrl = ref('')
+const hasMoreRecords = ref(false)
 
 // ========== Toast ==========
 const toastVisible = ref(false)
@@ -285,28 +348,79 @@ function showToast(msg: string): void {
 }
 
 // ========== 身份验证 ==========
-const phone = ref('')
-const code = ref('')
-const countdown = ref(0)
-let countdownTimer: ReturnType<typeof setInterval> | null = null
+const phoneInput = ref('')
+const verifying = ref(false)
+const verifiedSigner = ref<VerifiedSigner | null>(null)
 
-const isPhoneValid = computed(() => /^1\d{10}$/.test(phone.value))
+const isPhoneInputValid = computed(() => /^1\d{10}$/.test(phoneInput.value))
 
-async function handleGetCode(): Promise<void> {
-  if (!isPhoneValid.value || countdown.value > 0) return
+function maskPhone(phone: string): string {
+  if (phone.length < 7) return phone
+  return phone.slice(0, 3) + '****' + phone.slice(-4)
+}
+
+async function handleVerify(): Promise<void> {
+  if (!isPhoneInputValid.value || verifying.value) return
+  verifying.value = true
   try {
-    await sendVerificationCode(sessionId.value, phone.value)
-    showToast('验证码已发送')
-    countdown.value = 60
-    countdownTimer = setInterval(() => {
-      countdown.value--
-      if (countdown.value <= 0 && countdownTimer) {
-        clearInterval(countdownTimer)
-        countdownTimer = null
+    const result = await verifyPhone(sessionId.value, phoneInput.value)
+    if (result.verified && result.signer) {
+      verifiedSigner.value = result.signer
+      // 如果有指定的 recordId (直接链接), 直接跳转到签字表单
+      if (currentRecordId.value) {
+        currentSignerId.value = result.signer.signerId
+        await loadRecordData()
+      } else {
+        pageState.value = 'records'
       }
-    }, 1000)
+    } else {
+      showToast('手机号未匹配到签字人，请确认后重试')
+    }
   } catch (e) {
-    showToast(e instanceof Error ? e.message : '发送验证码失败')
+    showToast(e instanceof Error ? e.message : '验证失败，请重试')
+  } finally {
+    verifying.value = false
+  }
+}
+
+function handleBackToVerify(): void {
+  verifiedSigner.value = null
+  phoneInput.value = ''
+  pageState.value = 'verify'
+}
+
+// ========== 记录选择 ==========
+function handleSelectRecord(record: { recordId: string; isSigned: boolean }): void {
+  currentRecordId.value = record.recordId
+  loadRecordData()
+}
+
+async function loadRecordData(): Promise<void> {
+  pageState.value = 'loading'
+  try {
+    const data = await getSessionData(
+      sessionId.value,
+      currentRecordId.value,
+      currentSignerId.value || undefined
+    )
+    sessionData.value = data
+    const ext = data as SessionDetail & { signatureUrl?: string }
+    signatureUrl.value = ext.signatureUrl || ''
+    pageState.value = 'form'
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '加载失败，请稍后重试'
+    pageState.value = 'error'
+  }
+}
+
+function handleBackToRecords(): void {
+  // 重新验证以刷新记录状态
+  if (verifiedSigner.value) {
+    handleVerify().then(() => {
+      // handleVerify 会设置 pageState
+    })
+  } else {
+    pageState.value = 'verify'
   }
 }
 
@@ -322,10 +436,6 @@ function onSignatureChange(empty: boolean): void {
 const canSubmit = computed(() => {
   if (!sessionData.value || sessionData.value.isSigned) return false
   if (signatureEmpty.value) return false
-  if (sessionData.value.verifyIdentity) {
-    if (!isPhoneValid.value) return false
-    if (!/^\d{6}$/.test(code.value)) return false
-  }
   return true
 })
 
@@ -341,12 +451,14 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true
   try {
     const result = await submitSignature(sessionId.value, {
-      recordId: recordId.value,
+      recordId: currentRecordId.value,
       signatureData: dataUrl,
-      signerPhone: phone.value || undefined,
-      signerName: sessionData.value?.currentSigner?.name || '签字人',
+      signerPhone: verifiedSigner.value?.phone || phoneInput.value || undefined,
+      signerId: verifiedSigner.value?.signerId || currentSignerId.value || undefined,
+      signerName: verifiedSigner.value?.name || sessionData.value?.currentSigner?.name || '签字人',
     })
     receiptUrl.value = result.receiptUrl || ''
+    hasMoreRecords.value = result.hasMoreRecords || false
     pageState.value = 'success'
   } catch (e) {
     showToast(e instanceof Error ? e.message : '提交失败，请重试')
@@ -409,13 +521,17 @@ function handleClose(): void {
   }
 }
 
-function handleMore(): void {
-  showToast('更多功能开发中')
-}
-
 function viewReceipt(): void {
   if (receiptUrl.value) {
     window.open(receiptUrl.value, '_blank')
+  }
+}
+
+function handleRetry(): void {
+  if (verifiedSigner.value) {
+    pageState.value = 'records'
+  } else {
+    pageState.value = 'verify'
   }
 }
 
@@ -427,30 +543,28 @@ function formatTime(time: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// ========== 数据加载 ==========
-async function loadData(): Promise<void> {
-  pageState.value = 'loading'
-  try {
-    const data = await getSessionData(sessionId.value, recordId.value)
-    sessionData.value = data
-    // 服务器可能返回额外的 signatureUrl 字段
-    const ext = data as SessionDetail & { signatureUrl?: string }
-    signatureUrl.value = ext.signatureUrl || ''
-    pageState.value = 'form'
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '加载失败，请稍后重试'
+// ========== 初始化 ==========
+function init(): void {
+  parseRoute()
+  if (!sessionId.value) {
+    errorMsg.value = '无效的链接'
     pageState.value = 'error'
+    return
+  }
+
+  // 如果有 signerId 和 recordId (直接链接), 需要先验证
+  if (currentSignerId.value && currentRecordId.value) {
+    pageState.value = 'verify'
+  } else {
+    pageState.value = 'verify'
   }
 }
 
-// ========== 生命周期 ==========
 onMounted(() => {
-  parseRoute()
-  loadData()
+  init()
 })
 
 onBeforeUnmount(() => {
-  if (countdownTimer) clearInterval(countdownTimer)
   if (toastTimer) clearTimeout(toastTimer)
 })
 </script>
@@ -509,9 +623,7 @@ onBeforeUnmount(() => {
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .retry-btn {
@@ -525,14 +637,10 @@ onBeforeUnmount(() => {
   transition: background 0.2s;
 }
 
-.retry-btn:active {
-  background: #245bdb;
-}
+.retry-btn:active { background: #245bdb; }
 
 /* ========== 成功页面 ========== */
-.success-page {
-  background: #fff;
-}
+.success-page { background: #fff; }
 
 .success-icon {
   margin-bottom: 8px;
@@ -540,17 +648,9 @@ onBeforeUnmount(() => {
 }
 
 @keyframes pop-in {
-  0% {
-    transform: scale(0);
-    opacity: 0;
-  }
-  60% {
-    transform: scale(1.15);
-  }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .success-title {
@@ -567,7 +667,7 @@ onBeforeUnmount(() => {
 }
 
 .receipt-btn {
-  margin-top: 32px;
+  margin-top: 16px;
   padding: 12px 40px;
   background: #3370ff;
   color: #fff;
@@ -577,9 +677,7 @@ onBeforeUnmount(() => {
   transition: background 0.2s;
 }
 
-.receipt-btn:active {
-  background: #245bdb;
-}
+.receipt-btn:active { background: #245bdb; }
 
 .close-btn {
   margin-top: 16px;
@@ -591,9 +689,7 @@ onBeforeUnmount(() => {
   transition: background 0.2s;
 }
 
-.close-btn:active {
-  background: #e5e6eb;
-}
+.close-btn:active { background: #e5e6eb; }
 
 /* ========== 导航栏 ========== */
 .nav-bar {
@@ -625,9 +721,7 @@ onBeforeUnmount(() => {
   transition: background 0.2s;
 }
 
-.nav-btn:active {
-  background: rgba(255, 255, 255, 0.12);
-}
+.nav-btn:active { background: rgba(255, 255, 255, 0.12); }
 
 /* ========== 内容区域 ========== */
 .content {
@@ -635,9 +729,154 @@ onBeforeUnmount(() => {
   padding-bottom: 100px;
 }
 
-.content.has-bottom-bar {
-  padding-bottom: 100px;
+.content.has-bottom-bar { padding-bottom: 100px; }
+
+/* ========== 身份验证页面 ========== */
+.verify-card {
+  text-align: center;
+  padding: 32px 20px;
 }
+
+.verify-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.verify-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2329;
+  margin-bottom: 8px;
+}
+
+.verify-desc {
+  font-size: 14px;
+  color: #8f959e;
+  margin-bottom: 24px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.text-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  background: #f7f8fa;
+  border-radius: 10px;
+  font-size: 16px;
+  color: #1f2329;
+  transition: background 0.2s;
+  box-sizing: border-box;
+}
+
+.text-input::placeholder { color: #c9cdd4; }
+.text-input:focus { background: #f0f1f5; }
+
+.verify-btn {
+  height: 48px;
+  background: #3370ff;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.verify-btn:active:not(:disabled) {
+  background: #245bdb;
+  transform: scale(0.98);
+}
+
+.verify-btn:disabled {
+  background: #c9cdd4;
+}
+
+/* ========== 签字人信息卡片 ========== */
+.signer-info-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+}
+
+.signer-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #3370ff;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.signer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.signer-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.signer-phone {
+  font-size: 13px;
+  color: #8f959e;
+  margin-top: 4px;
+}
+
+/* ========== 记录列表 ========== */
+.records-list-card { padding: 16px; }
+
+.record-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid #f2f3f5;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.record-item:active { background: #f7f8fa; }
+
+.record-item.no-border { border-bottom: none; padding-bottom: 4px; }
+.record-item:first-child { padding-top: 4px; }
+
+.record-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.record-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #1f2329;
+}
+
+.record-id {
+  font-size: 12px;
+  color: #c9cdd4;
+}
+
+.record-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.arrow-icon { flex-shrink: 0; }
 
 /* ========== 确认单标题 ========== */
 .form-header {
@@ -672,6 +911,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+/* ========== 状态标签 ========== */
 .status-tag {
   flex-shrink: 0;
   padding: 3px 10px;
@@ -716,14 +956,8 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #f2f3f5;
 }
 
-.data-item.no-border {
-  border-bottom: none;
-  padding-bottom: 4px;
-}
-
-.data-item:first-child {
-  padding-top: 4px;
-}
+.data-item.no-border { border-bottom: none; padding-bottom: 4px; }
+.data-item:first-child { padding-top: 4px; }
 
 .data-label {
   flex-shrink: 0;
@@ -740,54 +974,37 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 
-/* ========== 身份验证 ========== */
-.input-group {
+/* ========== 会签状态 ========== */
+.signers-status-card { padding: 16px; }
+
+.signer-status-item {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #f2f3f5;
 }
 
-.input-row {
+.signer-status-item:last-child { border-bottom: none; }
+
+.signer-status-left {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.text-input {
-  flex: 1;
-  height: 44px;
-  padding: 0 14px;
-  background: #f7f8fa;
-  border-radius: 8px;
-  font-size: 15px;
-  color: #1f2329;
-  transition: background 0.2s;
+.signer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
-.text-input::placeholder {
-  color: #c9cdd4;
-}
+.dot-signed { background: #1dc981; }
+.dot-pending { background: #c9cdd4; }
 
-.text-input:focus {
-  background: #f0f1f5;
-}
-
-.code-btn {
-  flex-shrink: 0;
-  height: 44px;
-  padding: 0 14px;
-  background: rgba(51, 112, 255, 0.08);
-  color: #3370ff;
-  border-radius: 8px;
+.signer-status-name {
   font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-  transition: all 0.2s;
-}
-
-.code-btn:disabled {
-  color: #c9cdd4;
-  background: #f2f3f5;
+  color: #1f2329;
 }
 
 /* ========== 签名区域 ========== */
@@ -798,9 +1015,7 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
-.signature-header .card-title {
-  margin-bottom: 0;
-}
+.signature-header .card-title { margin-bottom: 0; }
 
 .signature-hint {
   font-size: 13px;
@@ -808,9 +1023,7 @@ onBeforeUnmount(() => {
 }
 
 /* ========== 签名预览（已签字） ========== */
-.signature-preview-card {
-  padding: 16px;
-}
+.signature-preview-card { padding: 16px; }
 
 .signature-preview {
   width: 100%;
@@ -848,15 +1061,8 @@ onBeforeUnmount(() => {
   border-top: 1px solid #f2f3f5;
 }
 
-.time-label {
-  font-size: 14px;
-  color: #8f959e;
-}
-
-.time-value {
-  font-size: 14px;
-  color: #1f2329;
-}
+.time-label { font-size: 14px; color: #8f959e; }
+.time-value { font-size: 14px; color: #1f2329; }
 
 /* ========== 底部提交栏 ========== */
 .bottom-bar {
@@ -895,10 +1101,7 @@ onBeforeUnmount(() => {
   background: #245bdb;
 }
 
-.submit-btn:disabled {
-  background: #c9cdd4;
-  color: #fff;
-}
+.submit-btn:disabled { background: #c9cdd4; color: #fff; }
 
 /* ========== Toast ========== */
 .toast {
@@ -918,12 +1121,8 @@ onBeforeUnmount(() => {
 }
 
 .toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.3s ease;
-}
+.toast-leave-active { transition: opacity 0.3s ease; }
 
 .toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-}
+.toast-leave-to { opacity: 0; }
 </style>

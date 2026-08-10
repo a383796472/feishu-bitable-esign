@@ -59,6 +59,10 @@
         v-model:sign-mode="signMode"
         v-model:verify-identity="verifyIdentity"
         v-model:signers="signers"
+        v-model:phone-field="phoneField"
+        v-model:status-field="statusField"
+        v-model:signature-field="signatureField"
+        :available-fields="availableFieldsForConfig"
       />
 
       <!-- Step 3: 二维码结果 -->
@@ -137,7 +141,7 @@ import {
   checkEditable,
 } from './api/bitable'
 import { createSession } from './api/server'
-import type { Signer, SignMode, FieldConfig } from '@shared/types'
+import type { Signer, SignMode, FieldConfig, WritebackConfig } from '@shared/types'
 
 // ========== 步骤控制 ==========
 const currentStep = ref(1)
@@ -177,6 +181,9 @@ const verifyIdentity = ref(false)
 const signers = ref<Signer[]>([
   { id: 'signer_default', name: '', phone: '' },
 ])
+const phoneField = ref('')
+const statusField = ref('签字状态')
+const signatureField = ref('签名图片')
 
 // ========== Step 3 状态 ==========
 const qrCodeUrl = ref('')
@@ -185,6 +192,19 @@ const shareUrl = ref('')
 // ========== 显示用计算属性 ==========
 const displayFormName = computed(
   () => formName.value || defaultFormName.value
+)
+
+/** 传递给 FormConfig 的可选字段列表 */
+const availableFieldsForConfig = computed<FieldConfig[]>(() =>
+  fields.value
+    .filter((f) => selectedFieldIds.value.includes(f.id))
+    .map((f, index) => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      selected: true,
+      order: index,
+    }))
 )
 
 const defaultFormName = computed(() => {
@@ -352,6 +372,12 @@ async function handleCreate(): Promise<void> {
     }
   }
 
+  // 身份验证模式下校验手机号字段
+  if (verifyIdentity.value && !phoneField.value) {
+    showToast('请选择手机号字段用于身份验证')
+    return
+  }
+
   creating.value = true
 
   // 开发模式：模拟创建结果
@@ -390,6 +416,11 @@ async function handleCreate(): Promise<void> {
           ? signers.value.filter((s) => s.name.trim())
           : [],
       recordIds: recordIds.value,
+      phoneField: phoneField.value || undefined,
+      writebackConfig: {
+        statusField: statusField.value || '签字状态',
+        signatureField: signatureField.value || '签名图片',
+      },
     })
 
     qrCodeUrl.value = response.qrCodeUrl

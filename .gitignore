@@ -43,6 +43,7 @@ packages/server/data.db-shm
 packages/server/data.db-wal
 packages/server/uploads/
 packages/server/dist/
+packages/server/logs/
 
 # TypeScript build info
 *.tsbuildinfo
