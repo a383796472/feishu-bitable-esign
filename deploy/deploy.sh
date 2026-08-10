@@ -102,6 +102,25 @@ fi
 npm run build:h5
 info "H5 编译完成"
 
+# ---------- 6.5 编译 Widget 前端 ----------
+info "编译 Widget 插件..."
+
+WIDGET_ENV_PROD="$PROJECT_ROOT/packages/widget/.env.production"
+if [ -n "$DEPLOY_DOMAIN" ]; then
+    echo "VITE_API_BASE_URL=https://$DEPLOY_DOMAIN" > "$WIDGET_ENV_PROD"
+    info "Widget API 地址: https://$DEPLOY_DOMAIN"
+else
+    warn "未设置 DEPLOY_DOMAIN 环境变量"
+    warn "请手动创建 packages/widget/.env.production 并填写:"
+    warn "  VITE_API_BASE_URL=https://你的域名"
+    if [ ! -f "$WIDGET_ENV_PROD" ]; then
+        echo "VITE_API_BASE_URL=https://your-domain.com" > "$WIDGET_ENV_PROD"
+    fi
+fi
+
+npm run build:widget
+info "Widget 编译完成"
+
 # ---------- 7. 确保目录存在 ----------
 info "创建必要目录..."
 mkdir -p "$PROJECT_ROOT/packages/server/uploads"

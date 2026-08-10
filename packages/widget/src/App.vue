@@ -166,6 +166,7 @@ const statusText = computed(() => {
 // ========== Bitable 数据 ==========
 const tables = ref<{ tableId: string; name: string }[]>([])
 const currentTableId = ref('')
+const appToken = ref('')  // Bitable 应用的 appToken (即 baseId)
 const fields = ref<IFieldMeta[]>([])
 const recordIds = ref<string[]>([])
 
@@ -247,6 +248,7 @@ async function initBitable(): Promise<void> {
 
     const selection = await getSelection()
     currentTableId.value = selection.tableId
+    appToken.value = selection.baseId  // baseId 即 appToken, 用于后端回写飞书表格
 
     const fieldMetaList = await getFieldMetaList()
     fields.value = fieldMetaList
@@ -404,7 +406,7 @@ async function handleCreate(): Promise<void> {
       }))
 
     const response = await createSession({
-      appToken: '',
+      appToken: appToken.value,
       tableId: currentTableId.value,
       tableName,
       fields: selectedFields,

@@ -59,6 +59,18 @@ if (fs.existsSync(h5DistPath)) {
   );
 }
 
+// 托管 Widget 前端 (生产模式, 从 widget/dist 读取)
+const widgetDistPath = path.resolve(SERVER_ROOT, '../widget/dist');
+if (fs.existsSync(widgetDistPath)) {
+  app.use('/widget', express.static(widgetDistPath));
+  console.log(`[Widget] 静态文件目录: ${widgetDistPath}`);
+} else {
+  console.warn(
+    `[Widget] dist 目录不存在: ${widgetDistPath}\n` +
+    '     开发模式请单独运行 Widget (cd packages/widget && npm run dev)'
+  );
+}
+
 // ==================== API 路由 ====================
 
 app.use('/api/sessions', sessionsRouter);
@@ -109,9 +121,10 @@ app.listen(PORT, () => {
   console.log('========================================');
   console.log('  飞书 Bitable 电子签名服务已启动');
   console.log(`  端口: ${PORT}`);
-  console.log(`  API:  http://localhost:${PORT}/api`);
-  console.log(`  H5:   http://localhost:${PORT}/h5`);
-  console.log(`  上传: http://localhost:${PORT}/uploads`);
+  console.log(`  API:   http://localhost:${PORT}/api`);
+  console.log(`  H5:    http://localhost:${PORT}/h5`);
+  console.log(`  Widget: http://localhost:${PORT}/widget`);
+  console.log(`  上传:  http://localhost:${PORT}/uploads`);
   console.log('========================================');
   console.log('');
 });
