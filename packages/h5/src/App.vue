@@ -266,7 +266,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import SignaturePad from './components/SignaturePad.vue'
 import { verifyPhone, getSessionData, submitSignature } from './api'
-import type { SessionDetail, SignerStatus, VerifiedSigner } from '@shared/types'
+import type { SessionDetail, VerifiedSigner } from '@shared/types'
 
 // ========== 类型定义 ==========
 type PageState = 'loading' | 'error' | 'verify' | 'records' | 'form' | 'success'
