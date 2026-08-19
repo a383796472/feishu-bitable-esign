@@ -2,8 +2,7 @@
 node_modules/
 .pnpm-store/
 
-# Build output
-dist/
+# Build output (server dist ignored, widget/h5 dist committed for feishu review)
 dist-ssr/
 *.local
 
